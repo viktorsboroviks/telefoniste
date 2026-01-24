@@ -20,9 +20,19 @@ public:
             callback_t cb,
             const std::string& socket_path = DEFAULT_SOCKET_PATH) :
         _fd(_open_socket(socket_path)),
+        _socket_path(socket_path),
         _cb(cb)
     {
-        // do nothing
+    }
+
+    // disable copying/assignment to prevent double-closing the fd
+    Telefoniste(const Telefoniste&)            = delete;
+    Telefoniste& operator=(const Telefoniste&) = delete;
+
+    ~Telefoniste()
+    {
+        ::close(_fd);
+        ::unlink(_socket_path.c_str());
     }
 
     void run()
@@ -35,13 +45,9 @@ public:
         //        }
     }
 
-    ~Telefoniste()
-    {
-        //        ::close(_server_fd);
-    }
-
 private:
     int _fd;
+    const std::string _socket_path;
     callback_t _cb;
 
     static int _open_socket(const std::string& path)
