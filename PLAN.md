@@ -4,6 +4,13 @@
   - very stable to work as intended from first try,
     but minimal on supported functionality and checks
   - extra features to be added as needed
+- fail fast
+- relies on asserts() even for runtime checks
+  - goal
+    - keep implementation simple
+    - crash program to get attention
+    - highligh exact failure place for a fix
+  - if forced by future use cases - will consider standard error handling
 - platforms: mac, linux
 - single object
   - registers ipc interface
