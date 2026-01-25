@@ -1,13 +1,16 @@
 #pragma once
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <functional>
 #include <string>
+#include <thread>
 
 class Telefoniste {
 public:
@@ -18,10 +21,12 @@ public:
 
     explicit Telefoniste(
             callback_t cb,
+            bool new_thread_per_cb         = true,
             const std::string& socket_path = DEFAULT_SOCKET_PATH) :
         _fd(_open_socket(socket_path)),
         _socket_path(socket_path),
-        _cb(cb)
+        _cb(cb),
+        _new_thread_per_cb(new_thread_per_cb)
     {
     }
 
@@ -37,18 +42,28 @@ public:
 
     void run()
     {
-        // TODO: for every new message open a dedicated thread
-        //        while (true) {
-        //            std::string msg = _receive_msg();
-        //            std::string resp = _cb(msg);
-        //            _send_msg(resp);
-        //        }
+        // TODO: review
+        while (true) {
+            int client_fd = ::accept(_fd, nullptr, nullptr);
+            if (client_fd == -1)
+                std::perror("accept");
+            assert(client_fd != -1);
+
+            if (_new_thread_per_cb) {
+                std::thread(&Telefoniste::_handle_client, this, client_fd)
+                        .detach();
+            }
+            else {
+                _handle_client(client_fd);
+            }
+        }
     }
 
 private:
-    int _fd;
+    const int _fd;
     const std::string _socket_path;
-    callback_t _cb;
+    const callback_t _cb;
+    const bool _new_thread_per_cb;
 
     static int _open_socket(const std::string& path)
     {
@@ -87,14 +102,84 @@ private:
         return fd;
     }
 
-    static const std::string _receive_msg()
+    // TODO: review if needed
+    void _handle_client(int client_fd)
     {
-        // accept connection, read message, close connection
-        return "";
+        std::string msg  = _receive(client_fd);
+        std::string resp = _cb(msg);
+        _send(client_fd, resp);
+        ::close(client_fd);
     }
 
-    static void _send_msg(const std::string& msg)
+    // TODO: review
+    static std::string _receive(int fd)
     {
-        // write message to fd
+        uint32_t net_len = 0;
+        size_t total     = 0;
+        char* header     = reinterpret_cast<char*>(&net_len);
+
+        while (total < sizeof(net_len)) {
+            ssize_t count =
+                    ::read(fd, header + total, sizeof(net_len) - total);
+            if (count == -1) {
+                std::perror("read header");
+                assert(count != -1);
+            }
+            if (count == 0) {
+                std::fprintf(stderr, "read header: unexpected eof\n");
+                assert(count != 0);
+            }
+            total += count;
+        }
+
+        // ntohl() - network to host long (big-endian, 4 bytes)
+        uint32_t len = ntohl(net_len);
+
+        std::string msg(len, '\0');
+        total = 0;
+        while (total < len) {
+            ssize_t count = ::read(fd, &msg[total], len - total);
+            if (count == -1) {
+                std::perror("read body");
+                assert(count != -1);
+            }
+            if (count == 0) {
+                std::fprintf(stderr, "read body: unexpected eof\n");
+                assert(count != 0);
+            }
+            total += count;
+        }
+        return msg;
+    }
+
+    // TODO: review
+    static void _send(int fd, const std::string& msg)
+    {
+        uint32_t len = static_cast<uint32_t>(msg.size());
+        assert(msg.size() == len && "msg too big");
+
+        // htonl() - host to network long (big-endian, 4 bytes)
+        uint32_t net_len   = htonl(len);
+        const char* header = reinterpret_cast<const char*>(&net_len);
+        size_t total       = 0;
+        while (total < sizeof(net_len)) {
+            ssize_t written =
+                    ::write(fd, header + total, sizeof(net_len) - total);
+            if (written == -1) {
+                std::perror("write header");
+                assert(written != -1);
+            }
+            total += written;
+        }
+
+        total = 0;
+        while (total < len) {
+            ssize_t written = ::write(fd, msg.data() + total, len - total);
+            if (written == -1) {
+                std::perror("write body");
+                assert(written != -1);
+            }
+            total += written;
+        }
     }
 };

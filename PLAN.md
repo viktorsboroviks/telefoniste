@@ -21,6 +21,7 @@
     - triggers registered callback
     - passes whatever was read to it
     - writes back response from the callback
+  - message len controlled by integer header, no other overhead
 - uses unix sockets
 - in the future can be extended to use other ipc mechanism if needed
   (e.g. win support, net sockets)
