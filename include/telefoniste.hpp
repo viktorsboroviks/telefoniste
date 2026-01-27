@@ -23,7 +23,7 @@ public:
             callback_t cb,
             bool new_thread_per_cb         = true,
             const std::string& socket_path = DEFAULT_SOCKET_PATH) :
-        _fd(_open_socket(socket_path)),
+        _server_fd(_open_socket(socket_path)),
         _socket_path(socket_path),
         _cb(cb),
         _new_thread_per_cb(new_thread_per_cb)
@@ -36,20 +36,21 @@ public:
 
     ~Telefoniste()
     {
-        ::close(_fd);
+        ::close(_server_fd);
         ::unlink(_socket_path.c_str());
     }
 
     void run()
     {
-        // TODO: review
         while (true) {
-            int client_fd = ::accept(_fd, nullptr, nullptr);
+            int client_fd = ::accept(_server_fd, nullptr, nullptr);
             if (client_fd == -1)
                 std::perror("accept");
             assert(client_fd != -1);
 
             if (_new_thread_per_cb) {
+                // no concurrency around _handle_client, _receive, _send
+                // as each client owns its own resources and gets own client_fd
                 std::thread(&Telefoniste::_handle_client, this, client_fd)
                         .detach();
             }
@@ -60,7 +61,7 @@ public:
     }
 
 private:
-    const int _fd;
+    const int _server_fd;
     const std::string _socket_path;
     const callback_t _cb;
     const bool _new_thread_per_cb;
@@ -102,7 +103,6 @@ private:
         return fd;
     }
 
-    // TODO: review if needed
     void _handle_client(int client_fd)
     {
         std::string msg  = _receive(client_fd);
@@ -111,75 +111,69 @@ private:
         ::close(client_fd);
     }
 
-    // TODO: review
-    static std::string _receive(int fd)
+    static void _readn(int src_fd, void* const p_dst, size_t n)
     {
-        uint32_t net_len = 0;
-        size_t total     = 0;
-        char* header     = reinterpret_cast<char*>(&net_len);
-
-        while (total < sizeof(net_len)) {
-            ssize_t count =
-                    ::read(fd, header + total, sizeof(net_len) - total);
-            if (count == -1) {
-                std::perror("read header");
-                assert(count != -1);
-            }
-            if (count == 0) {
-                std::fprintf(stderr, "read header: unexpected eof\n");
-                assert(count != 0);
-            }
-            total += count;
-        }
-
-        // ntohl() - network to host long (big-endian, 4 bytes)
-        uint32_t len = ntohl(net_len);
-
-        std::string msg(len, '\0');
-        total = 0;
-        while (total < len) {
-            ssize_t count = ::read(fd, &msg[total], len - total);
-            if (count == -1) {
-                std::perror("read body");
-                assert(count != -1);
-            }
-            if (count == 0) {
-                std::fprintf(stderr, "read body: unexpected eof\n");
-                assert(count != 0);
+        size_t total = 0;
+        while (total < n) {
+            const ssize_t count = ::read(src_fd, p_dst + total, n - total);
+            switch (count) {
+                case -1:
+                    std::perror("read");
+                    assert(false);
+                    break;
+                case 0:
+                    std::fprintf(stderr, "read: unexpected eof\n");
+                    assert(false);
+                    break;
+                default:
+                    assert(count > 0);
+                    break;
             }
             total += count;
         }
+    }
+
+    static void _writen(int dest_fd, const void* const p_src, size_t n)
+    {
+        size_t total = 0;
+        while (total < n) {
+            const ssize_t count = ::write(dest_fd, p_src + total, n - total);
+            if (count == -1) {
+                std::perror("write");
+                assert(false);
+            }
+            total += count;
+        }
+    }
+
+    static std::string _receive(int client_fd)
+    {
+        // read mesage length from header in network byte order
+        uint32_t msg_nlen      = 0;
+        char* const p_msg_nlen = reinterpret_cast<char* const>(&msg_nlen);
+        _readn(client_fd, p_msg_nlen, sizeof(msg_nlen));
+
+        // convert length from network byte order to host byte order
+        // ntohl() - network to host long (big-endian)
+        uint32_t msg_len = ntohl(msg_nlen);
+
+        // read message body
+        std::string msg(msg_len, '\0');
+        _readn(client_fd, &msg[0], msg_len);
         return msg;
     }
 
-    // TODO: review
-    static void _send(int fd, const std::string& msg)
+    static void _send(int client_fd, const std::string& msg)
     {
-        uint32_t len = static_cast<uint32_t>(msg.size());
-        assert(msg.size() == len && "msg too big");
+        // write message length in header in network byte order
+        uint32_t msg_len = static_cast<uint32_t>(msg.size());
 
         // htonl() - host to network long (big-endian, 4 bytes)
-        uint32_t net_len   = htonl(len);
-        const char* header = reinterpret_cast<const char*>(&net_len);
-        size_t total       = 0;
-        while (total < sizeof(net_len)) {
-            ssize_t written =
-                    ::write(fd, header + total, sizeof(net_len) - total);
-            if (written == -1) {
-                std::perror("write header");
-                assert(written != -1);
-            }
-            total += written;
-        }
+        uint32_t msg_nlen     = htonl(msg_len);
+        char* const p_msg_len = reinterpret_cast<char* const>(&msg_nlen);
+        _writen(client_fd, p_msg_len, sizeof(msg_nlen));
 
-        total = 0;
-        while (total < len) {
-            ssize_t written = ::write(fd, msg.data() + total, len - total);
-            if (written == -1) {
-                std::perror("write body");
-                assert(written != -1);
-            }
-            total += written;
-        }
+        // write message body
+        _writen(client_fd, msg.data(), msg_len);
     }
 };
