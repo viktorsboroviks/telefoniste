@@ -4,7 +4,9 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cassert>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -217,32 +219,77 @@ private:
 
 class Telefoniste {
 public:
-    static void answer_calls(Socket& s,
-                             callback_t answer_cb,
-                             bool answer_in_new_thread = true)
+    ~Telefoniste()
     {
-        s.open_server();
-        const int server_fd = s.fd;
+        stop();
+    }
 
-        while (true) {
-            int client_fd = ::accept(server_fd, nullptr, nullptr);
-            if (client_fd == -1)
-                std::perror("accept");
-            assert(client_fd != -1);
+    void answer_calls(Socket& s,
+                      callback_t answer_cb,
+                      bool answer_in_new_thread = true)
+    {
+        if (s.is_open)
+            perror("socket already open");
+        assert(!s.is_open);
 
-            if (answer_in_new_thread) {
-                // no concurrency around _answer, _receive, _send
-                // as each client owns its own resources and gets own client_fd
-                std::thread(&Telefoniste::_answer, client_fd, answer_cb)
-                        .detach();
+        if (_thread.joinable())
+            perror("telefoniste already answering calls");
+        assert(!_thread.joinable());
+
+        _stop.store(false);
+        p_socket = &s;
+
+        _thread = std::thread([this, answer_cb, answer_in_new_thread] {
+            p_socket->open_server();
+            const int server_fd = p_socket->fd;
+
+            while (!_stop.load()) {
+                int client_fd = ::accept(server_fd, nullptr, nullptr);
+                if (client_fd == -1) {
+                    // if interrupted by stop request do not print to stderr
+                    if (_stop.load()) {
+                        break;
+                    }
+                    std::perror("accept");
+                    if (errno == EINTR) {
+                        continue;
+                    }
+                    break;
+                }
+
+                if (answer_in_new_thread) {
+                    // no concurrency around _answer, _receive, _send
+                    // as each client owns its own resources and gets own
+                    // client_fd
+                    std::thread([answer_cb, client_fd] {
+                        _answer(client_fd, answer_cb);
+                    }).detach();
+                }
+                else {
+                    _answer(client_fd, answer_cb);
+                }
             }
-            else {
-                _answer(client_fd, answer_cb);
-            }
+        });
+    }
+
+    void stop()
+    {
+        _stop.store(true);
+        // close server fd to unblock accept()
+        if (p_socket != nullptr) {
+            p_socket->close();
         }
+        if (_thread.joinable()) {
+            _thread.join();
+        }
+        p_socket = nullptr;
     }
 
 private:
+    Socket* p_socket = nullptr;
+    std::thread _thread;
+    std::atomic<bool> _stop{false};
+
     static void _answer(int client_fd, callback_t answer_cb)
     {
         std::string msg  = Socket::receive_msg(client_fd);
