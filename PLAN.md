@@ -12,15 +12,23 @@
     - highligh exact failure place for a fix
   - if forced by future use cases - will consider standard error handling
 - platforms: mac, linux
-- single object
-  - registers ipc interface
-  - constantly listens on it
-  - if new message
-    - reads it
-    - spawns a new thread
-    - triggers registered callback
-    - passes whatever was read to it
-    - writes back response from the callback
+- small set of classes
+  - Socket
+    - owns file descriptor and socket path
+    - handles socket init/close logic
+    - provides primitive send/receive commands
+  - Server
+    - registers ipc interface
+    - runs listener in a background thread
+    - if new message
+      - reads it
+      - optionally spawns a new thread (configurable)
+      - triggers registered callback
+      - passes whatever was read to it
+      - writes back response from the callback
+    - supports stop() to unblock accept and shut down cleanly
+  - Client
+    - provides call() for one-shot request/response
   - message len controlled by integer header, no other overhead
 - uses unix sockets
 - in the future can be extended to use other ipc mechanism if needed

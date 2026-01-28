@@ -5,8 +5,7 @@
 	lint \
 	lint-cpp \
 	clean \
-	test \
-	run-test
+	test
 
 all: lint format test
 
@@ -100,11 +99,71 @@ tests/answer_calls_test.out: \
 		-I./include \
 		./tests/answer_calls_test.cpp -o ./tests/answer_calls_test.out
 
+tests/answer_calls_single_thread_test.out: \
+		tests/answer_calls_single_thread_test.cpp \
+		include/telefoniste.hpp
+	$(CPP) -std=c++20 \
+		-Wall -Wextra -Werror -Wpedantic \
+		-pthread \
+		$(SANITIZE_FLAGS) \
+		$(OPTIMIZE_FLAGS) \
+		$(ASSERTS_FLAGS) \
+		$(DEBUG_FLAGS) \
+		-I./include \
+		./tests/answer_calls_single_thread_test.cpp -o ./tests/answer_calls_single_thread_test.out
+
+tests/answer_calls_multiclient_test.out: \
+		tests/answer_calls_multiclient_test.cpp \
+		include/telefoniste.hpp
+	$(CPP) -std=c++20 \
+		-Wall -Wextra -Werror -Wpedantic \
+		-pthread \
+		$(SANITIZE_FLAGS) \
+		$(OPTIMIZE_FLAGS) \
+		$(ASSERTS_FLAGS) \
+		$(DEBUG_FLAGS) \
+		-I./include \
+		./tests/answer_calls_multiclient_test.cpp -o ./tests/answer_calls_multiclient_test.out
+
+tests/answer_calls_zero_length_test.out: \
+		tests/answer_calls_zero_length_test.cpp \
+		include/telefoniste.hpp
+	$(CPP) -std=c++20 \
+		-Wall -Wextra -Werror -Wpedantic \
+		-pthread \
+		$(SANITIZE_FLAGS) \
+		$(OPTIMIZE_FLAGS) \
+		$(ASSERTS_FLAGS) \
+		$(DEBUG_FLAGS) \
+		-I./include \
+		./tests/answer_calls_zero_length_test.cpp -o ./tests/answer_calls_zero_length_test.out
+
+tests/answer_calls_large_payload_test.out: \
+		tests/answer_calls_large_payload_test.cpp \
+		include/telefoniste.hpp
+	$(CPP) -std=c++20 \
+		-Wall -Wextra -Werror -Wpedantic \
+		-pthread \
+		$(SANITIZE_FLAGS) \
+		$(OPTIMIZE_FLAGS) \
+		$(ASSERTS_FLAGS) \
+		$(DEBUG_FLAGS) \
+		-I./include \
+		./tests/answer_calls_large_payload_test.cpp -o ./tests/answer_calls_large_payload_test.out
+
 test: \
 		tests/echo_test.out \
-		tests/answer_calls_test.out
+		tests/answer_calls_test.out \
+		tests/answer_calls_single_thread_test.out \
+		tests/answer_calls_multiclient_test.out \
+		tests/answer_calls_zero_length_test.out \
+		tests/answer_calls_large_payload_test.out
 	./tests/echo_test.out
 	./tests/answer_calls_test.out
+	./tests/answer_calls_single_thread_test.out
+	./tests/answer_calls_multiclient_test.out
+	./tests/answer_calls_zero_length_test.out
+	./tests/answer_calls_large_payload_test.out
 
 clean:
 	rm -f cppcheck_report.txt
