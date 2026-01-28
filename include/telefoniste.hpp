@@ -86,6 +86,10 @@ public:
     void open_client()
     {
         assert(!is_open);
+        if (::access(path.c_str(), F_OK) != 0) {
+            std::perror("access");
+            assert(false);
+        }
         _open();
 
         sockaddr_un addr{};

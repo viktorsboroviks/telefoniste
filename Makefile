@@ -2,12 +2,23 @@
 	all \
 	format \
 	format-cpp \
+	format-python \
 	lint \
 	lint-cpp \
+	venv \
+	lint-python \
 	clean \
 	test
 
 all: lint format test
+
+PYTHON_VERSION := python3.12
+PYTHON_FILES := \
+	python/telefoniste.py
+
+venv: requirements.txt
+	$(PYTHON_VERSION) -m venv venv
+	./venv/bin/pip3 install --no-cache-dir --requirement requirements.txt
 
 UNAME_S := $(shell uname -s)
 # on macos use clang++
@@ -44,13 +55,16 @@ else
 OPTIMIZE_FLAGS := -O3
 endif
 
-format: format-cpp
+format: format-cpp format-python
 
 format-cpp: \
 		include/telefoniste.hpp
 	clang-format -i $^
 
-lint: lint-cpp
+format-python: venv $(PYTHON_FILES)
+	./venv/bin/black $(PYTHON_FILES)
+
+lint: lint-cpp lint-python
 
 lint-cpp: \
 		include/telefoniste.hpp
@@ -70,6 +84,11 @@ lint-cpp: \
 		--checkers-report=cppcheck_report.txt \
 		-I./include \
 		$^
+
+lint-python: venv $(PYTHON_FILES)
+	PYTHONPATH=$(PYTHONPATH):./python \
+		./venv/bin/pylint $(PYTHON_FILES) ; \
+		./venv/bin/flake8 $(PYTHON_FILES)
 
 tests/echo_test.out: \
 		tests/echo_test.cpp \
@@ -168,3 +187,4 @@ test: \
 clean:
 	rm -f cppcheck_report.txt
 	rm -f tests/*.out
+	rm -rf venv
