@@ -12,110 +12,97 @@
 #include <string>
 #include <thread>
 
-class Telefoniste {
-public:
-    using callback_t = std::function<std::string(const std::string& msg)>;
-    inline static const std::string DEFAULT_SOCKET_PATH =
-            "/tmp/telefoniste.sock";
-    inline static const int MAX_CONNECTIONS = 16;
+namespace telefoniste {
 
-    explicit Telefoniste(
-            callback_t cb,
-            bool new_thread_per_cb         = true,
-            const std::string& socket_path = DEFAULT_SOCKET_PATH) :
-        _server_fd(_open_socket(socket_path)),
-        _socket_path(socket_path),
-        _cb(cb),
-        _new_thread_per_cb(new_thread_per_cb)
+inline static const std::string DEFAULT_SOCKET_PATH = "/tmp/telefoniste.sock";
+inline static const int MAX_CONNECTIONS             = 16;
+using callback_t = std::function<std::string(const std::string& msg)>;
+
+class Socket {
+public:
+    int fd = -1;
+    std::string path;
+    bool is_open     = false;
+    bool rm_on_close = false;
+
+    explicit Socket(const std::string& path = DEFAULT_SOCKET_PATH) :
+        path(path)
     {
     }
 
     // disable copying/assignment to prevent double-closing the fd
-    Telefoniste(const Telefoniste&)            = delete;
-    Telefoniste& operator=(const Telefoniste&) = delete;
+    Socket(const Socket&)            = delete;
+    Socket& operator=(const Socket&) = delete;
 
-    ~Telefoniste()
+    ~Socket()
     {
-        ::close(_server_fd);
-        ::unlink(_socket_path.c_str());
+        close();
     }
 
-    void run()
+    void close()
     {
-        while (true) {
-            int client_fd = ::accept(_server_fd, nullptr, nullptr);
-            if (client_fd == -1)
-                std::perror("accept");
-            assert(client_fd != -1);
-
-            if (_new_thread_per_cb) {
-                // no concurrency around _handle_client, _receive, _send
-                // as each client owns its own resources and gets own client_fd
-                std::thread(&Telefoniste::_handle_client, this, client_fd)
-                        .detach();
-            }
-            else {
-                _handle_client(client_fd);
-            }
+        if (!is_open)
+            return;
+        if (fd != -1) {
+            ::close(fd);
         }
+        fd      = -1;
+        is_open = false;
+        if (!rm_on_close) {
+            return;
+        }
+        if (!path.empty()) {
+            ::unlink(path.c_str());
+        }
+        rm_on_close = false;
     }
 
-private:
-    const int _server_fd;
-    const std::string _socket_path;
-    const callback_t _cb;
-    const bool _new_thread_per_cb;
-
-    static int _open_socket(const std::string& path)
+    void open_server()
     {
-        // initial checks
-        assert(!path.empty());
-        // avoid silent truncation, sun_path size varies by os
-        // (typically 104 on mac, 108 on linux)
-        assert(path.length() < sizeof(sockaddr_un::sun_path));
-
-        // remove socket file if it exists, this resolves
-        // "address already in use" errors if the program crashed previously
-        // and the socket file was not removed
-        ::unlink(path.c_str());
-
-        // create fd endpoint
-        int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd == -1)
-            std::perror("socket");
-        assert(fd != -1);
+        assert(!is_open);
+        _open(true);
 
         // bind = associate fd with path
         sockaddr_un addr{};
         addr.sun_family = AF_UNIX;
         std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
-        int bind_retval =
+        const int bind_retval =
                 ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
         if (bind_retval != 0)
             std::perror("bind");
         assert(bind_retval == 0);
 
         // listen for connections
-        int listen_retval = ::listen(fd, MAX_CONNECTIONS);
+        const int listen_retval = ::listen(fd, MAX_CONNECTIONS);
         if (listen_retval != 0)
             std::perror("listen");
         assert(listen_retval == 0);
-        return fd;
+
+        rm_on_close = true;
     }
 
-    void _handle_client(int client_fd)
+    void open_client()
     {
-        std::string msg  = _receive(client_fd);
-        std::string resp = _cb(msg);
-        _send(client_fd, resp);
-        ::close(client_fd);
+        assert(!is_open);
+        _open();
+
+        sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
+
+        const int retval_connect = ::connect(
+                fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        if (retval_connect == -1)
+            std::perror("connect");
+        assert(retval_connect == 0);
     }
 
-    static void _readn(int src_fd, void* const p_dst, size_t n)
+    static void readn(int src_fd, void* const p_dst, size_t n)
     {
         size_t total = 0;
         while (total < n) {
-            const ssize_t count = ::read(src_fd, p_dst + total, n - total);
+            const ssize_t count = ::read(
+                    src_fd, static_cast<char*>(p_dst) + total, n - total);
             switch (count) {
                 case -1:
                     std::perror("read");
@@ -133,11 +120,19 @@ private:
         }
     }
 
-    static void _writen(int dest_fd, const void* const p_src, size_t n)
+    void readn(void* const p_dst, size_t n) const
+    {
+        readn(fd, p_dst, n);
+    }
+
+    static void writen(int dest_fd, const void* const p_src, size_t n)
     {
         size_t total = 0;
         while (total < n) {
-            const ssize_t count = ::write(dest_fd, p_src + total, n - total);
+            const ssize_t count =
+                    ::write(dest_fd,
+                            static_cast<const char*>(p_src) + total,
+                            n - total);
             if (count == -1) {
                 std::perror("write");
                 assert(false);
@@ -146,12 +141,17 @@ private:
         }
     }
 
-    static std::string _receive(int client_fd)
+    void writen(const void* const p_src, size_t n) const
+    {
+        writen(fd, p_src, n);
+    }
+
+    static std::string receive_msg(int client_fd)
     {
         // read mesage length from header in network byte order
         uint32_t msg_nlen      = 0;
         char* const p_msg_nlen = reinterpret_cast<char* const>(&msg_nlen);
-        _readn(client_fd, p_msg_nlen, sizeof(msg_nlen));
+        readn(client_fd, p_msg_nlen, sizeof(msg_nlen));
 
         // convert length from network byte order to host byte order
         // ntohl() - network to host long (big-endian)
@@ -159,21 +159,106 @@ private:
 
         // read message body
         std::string msg(msg_len, '\0');
-        _readn(client_fd, &msg[0], msg_len);
+        readn(client_fd, &msg[0], msg_len);
         return msg;
     }
 
-    static void _send(int client_fd, const std::string& msg)
+    std::string receive_msg() const
+    {
+        return receive_msg(fd);
+    }
+
+    static void send_msg(int client_fd, const std::string& msg)
     {
         // write message length in header in network byte order
         uint32_t msg_len = static_cast<uint32_t>(msg.size());
 
         // htonl() - host to network long (big-endian, 4 bytes)
         uint32_t msg_nlen     = htonl(msg_len);
-        char* const p_msg_len = reinterpret_cast<char* const>(&msg_nlen);
-        _writen(client_fd, p_msg_len, sizeof(msg_nlen));
+        const char* p_msg_len = reinterpret_cast<const char*>(&msg_nlen);
+        writen(client_fd, p_msg_len, sizeof(msg_nlen));
 
         // write message body
-        _writen(client_fd, msg.data(), msg_len);
+        writen(client_fd, msg.data(), msg_len);
+    }
+
+    void send_msg(const std::string& msg) const
+    {
+        send_msg(fd, msg);
+    }
+
+private:
+    void _open(bool replace_file_if_exist = false)
+    {
+        if (is_open)
+            return;
+
+        // initial checks
+        assert(!path.empty());
+        // avoid silent truncation, sun_path size varies by os
+        // (typically 104 on mac, 108 on linux)
+        assert(path.length() < sizeof(sockaddr_un::sun_path));
+
+        // remove socket file if it exists, this resolves
+        // "address already in use" errors if the program crashed previously
+        // and the socket file was not removed
+        if (replace_file_if_exist)
+            ::unlink(path.c_str());
+
+        // create fd endpoint
+        fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd == -1)
+            std::perror("socket");
+        assert(fd != -1);
+
+        is_open = true;
     }
 };
+
+class Telefoniste {
+public:
+    static void answer_calls(Socket& s,
+                             callback_t answer_cb,
+                             bool answer_in_new_thread = true)
+    {
+        s.open_server();
+        const int server_fd = s.fd;
+
+        while (true) {
+            int client_fd = ::accept(server_fd, nullptr, nullptr);
+            if (client_fd == -1)
+                std::perror("accept");
+            assert(client_fd != -1);
+
+            if (answer_in_new_thread) {
+                // no concurrency around _answer, _receive, _send
+                // as each client owns its own resources and gets own client_fd
+                std::thread(&Telefoniste::_answer, client_fd, answer_cb)
+                        .detach();
+            }
+            else {
+                _answer(client_fd, answer_cb);
+            }
+        }
+    }
+
+private:
+    static void _answer(int client_fd, callback_t answer_cb)
+    {
+        std::string msg  = Socket::receive_msg(client_fd);
+        std::string resp = answer_cb(msg);
+        Socket::send_msg(client_fd, resp);
+        ::close(client_fd);
+    }
+};
+
+inline std::string call(Socket& s, const std::string& msg)
+{
+    s.open_client();
+    s.send_msg(msg);
+    std::string resp = s.receive_msg();
+    s.close();
+    return resp;
+}
+
+};  // namespace telefoniste
