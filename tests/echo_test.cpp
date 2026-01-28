@@ -45,7 +45,7 @@ int main()
 
     Socket client_sock(socket_path);
     const std::string payload = "echo-test";
-    const std::string resp = call(client_sock, payload);
+    const std::string resp = Client::call(client_sock, payload);
     assert(resp == payload);
 
     server.join();

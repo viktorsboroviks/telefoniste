@@ -13,7 +13,7 @@ int main()
     const std::string socket_path = "/tmp/telefoniste_answer_calls.sock";
 
     Socket server_sock(socket_path);
-    Telefoniste server;
+    Server server;
 
     server.answer_calls(server_sock, [](const std::string& msg) { return msg; });
 
@@ -26,7 +26,7 @@ int main()
 
     Socket client_sock(socket_path);
     const std::string payload = "answer-calls-test";
-    const std::string resp = call(client_sock, payload);
+    const std::string resp = Client::call(client_sock, payload);
     assert(resp == payload);
 
     server.stop();

@@ -217,9 +217,9 @@ private:
     }
 };
 
-class Telefoniste {
+class Server {
 public:
-    ~Telefoniste()
+    ~Server()
     {
         stop();
     }
@@ -299,13 +299,16 @@ private:
     }
 };
 
-inline std::string call(Socket& s, const std::string& msg)
-{
-    s.open_client();
-    s.send_msg(msg);
-    std::string resp = s.receive_msg();
-    s.close();
-    return resp;
-}
+class Client {
+public:
+    static std::string call(Socket& s, const std::string& msg)
+    {
+        s.open_client();
+        s.send_msg(msg);
+        std::string resp = s.receive_msg();
+        s.close();
+        return resp;
+    }
+};
 
 };  // namespace telefoniste
