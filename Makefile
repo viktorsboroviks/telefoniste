@@ -170,21 +170,38 @@ tests/answer_calls_large_payload_test.out: \
 		-I./include \
 		./tests/answer_calls_large_payload_test.cpp -o ./tests/answer_calls_large_payload_test.out
 
-test: \
+tests/py_server_test.out: \
+		tests/py_server_test.cpp \
+		include/telefoniste.hpp
+	$(CPP) -std=c++20 \
+		-Wall -Wextra -Werror -Wpedantic \
+		-pthread \
+		$(SANITIZE_FLAGS) \
+		$(OPTIMIZE_FLAGS) \
+		$(ASSERTS_FLAGS) \
+		$(DEBUG_FLAGS) \
+		-I./include \
+		./tests/py_server_test.cpp -o ./tests/py_server_test.out
+
+test: venv \
 		tests/echo_test.out \
 		tests/answer_calls_test.out \
 		tests/answer_calls_single_thread_test.out \
 		tests/answer_calls_multiclient_test.out \
 		tests/answer_calls_zero_length_test.out \
-		tests/answer_calls_large_payload_test.out
+		tests/answer_calls_large_payload_test.out \
+		tests/py_server_test.out
 	./tests/echo_test.out
 	./tests/answer_calls_test.out
 	./tests/answer_calls_single_thread_test.out
 	./tests/answer_calls_multiclient_test.out
 	./tests/answer_calls_zero_length_test.out
 	./tests/answer_calls_large_payload_test.out
+	PYTHONPATH=$(PYTHONPATH):./python \
+		./venv/bin/python3 ./tests/py_client_test.py
 
 clean:
 	rm -f cppcheck_report.txt
 	rm -f tests/*.out
 	rm -rf venv
+	rm -rf python/__pycache__

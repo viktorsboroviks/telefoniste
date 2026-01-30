@@ -93,7 +93,6 @@ class Socket:
 class Client:
     @staticmethod
     def call(sock: Socket, payload: bytes) -> bytes:
-        """open socket, send payload, receive response, close."""
         sock.open_client()
         try:
             sock.send_msg(payload)

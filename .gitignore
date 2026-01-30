@@ -1,3 +1,4 @@
 venv
 cppcheck_report.txt
 tests/**.out
+**/__pycache__/
