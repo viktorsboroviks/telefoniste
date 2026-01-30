@@ -1,7 +1,7 @@
-[ ] v1.0
+[x] v1.0
   [x] finish cpp implementation
   [x] add cpp tests
   [x] add py client
   [x] run/fix py lint
   [x] add cpp/py tests
-  [ ] add examples, doc
+  [x] add examples, doc
